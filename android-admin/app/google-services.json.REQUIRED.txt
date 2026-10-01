@@ -1,0 +1,2 @@
+Download google-services.json from your Firebase Android app (package: com.ewa.admin) and place it here as app/google-services.json before building.
+Firebase Console > Project settings > Your apps > Android app > Download google-services.json.
