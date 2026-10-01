@@ -1,0 +1,166 @@
+name: Build EWA Admin APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build EWA Admin v0.7.1
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---------------------------------------------------------
+      # 1. Checkout repository
+      # ---------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # 2. Java 17
+      # No Gradle cache here - avoids previous setup-java failure
+      # ---------------------------------------------------------
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # ---------------------------------------------------------
+      # 3. Android SDK
+      # ---------------------------------------------------------
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      # ---------------------------------------------------------
+      # 4. Verify repository structure
+      # ---------------------------------------------------------
+      - name: Verify Android project
+        run: |
+          echo "Repository root:"
+          pwd
+
+          echo "Checking Android project..."
+
+          test -f android-admin/settings.gradle || {
+            echo "ERROR: android-admin/settings.gradle not found"
+            exit 1
+          }
+
+          test -f android-admin/build.gradle || {
+            echo "ERROR: android-admin/build.gradle not found"
+            exit 1
+          }
+
+          test -f android-admin/app/build.gradle || {
+            echo "ERROR: android-admin/app/build.gradle not found"
+            exit 1
+          }
+
+          echo "Android project structure OK"
+
+      # ---------------------------------------------------------
+      # 5. Firebase configuration
+      # Repository Secret:
+      # FIREBASE_GOOGLE_SERVICES_JSON
+      # ---------------------------------------------------------
+      - name: Create Firebase google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "ERROR: FIREBASE_GOOGLE_SERVICES_JSON secret is missing."
+            echo "Add it under:"
+            echo "Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+          printf '%s' "$GOOGLE_SERVICES_JSON" \
+            > android-admin/app/google-services.json
+
+          if [ ! -s android-admin/app/google-services.json ]; then
+            echo "ERROR: google-services.json was not created."
+            exit 1
+          fi
+
+          echo "Firebase configuration created successfully."
+
+      # ---------------------------------------------------------
+      # 6. Install Gradle 8.7
+      # Project currently has no Gradle wrapper
+      # ---------------------------------------------------------
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      # ---------------------------------------------------------
+      # 7. Show versions
+      # ---------------------------------------------------------
+      - name: Environment information
+        run: |
+          java -version
+          gradle --version
+          sdkmanager --version
+
+      # ---------------------------------------------------------
+      # 8. Build APK
+      # ---------------------------------------------------------
+      - name: Build Debug APK
+        working-directory: android-admin
+        run: |
+          gradle clean assembleDebug --stacktrace
+
+      # ---------------------------------------------------------
+      # 9. Verify APK
+      # ---------------------------------------------------------
+      - name: Verify generated APK
+        run: |
+          APK="android-admin/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            echo "Searching for APK files..."
+            find . -type f -name "*.apk" -print
+            exit 1
+          fi
+
+          echo "APK generated successfully:"
+          ls -lh "$APK"
+
+      # ---------------------------------------------------------
+      # 10. Rename final APK
+      # ---------------------------------------------------------
+      - name: Prepare release APK
+        run: |
+          mkdir -p release
+
+          cp \
+            android-admin/app/build/outputs/apk/debug/app-debug.apk \
+            release/EWA-Admin-v0.7.1.apk
+
+          ls -lh release/
+
+      # ---------------------------------------------------------
+      # 11. Upload APK
+      # ---------------------------------------------------------
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EWA-Admin-v0.7.1-APK
+          path: release/EWA-Admin-v0.7.1.apk
+          if-no-files-found: error
+          retention-days: 30
